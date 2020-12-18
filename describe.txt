@@ -1,0 +1,420 @@
+Name:         test-nifi-0
+Namespace:    test
+Priority:     0
+Node:         worker03.test-local.halo.pan-net.cloud/192.168.69.10
+Start Time:   Fri, 18 Dec 2020 23:57:39 +0530
+Labels:       app=nifi
+              chart=nifi-0.1.0
+              controller-revision-hash=test-nifi-9cffcb6bd
+              heritage=Helm
+              release=test
+              statefulset.kubernetes.io/pod-name=test-nifi-0
+Annotations:  cni.projectcalico.org/podIP: 10.244.1.161/32
+              cni.projectcalico.org/podIPs: 10.244.1.161/32
+              security.alpha.kubernetes.io/sysctls: net.ipv4.ip_local_port_range=10000 65000
+Status:       Running
+IP:           10.244.1.161
+IPs:
+  IP:           10.244.1.161
+Controlled By:  StatefulSet/test-nifi
+Init Containers:
+  zookeeper:
+    Container ID:  docker://f63094ab3bd6a98df5225e47e29fa09e5fd6a2be7ed01839f700efda6c17186b
+    Image:         busybox
+    Image ID:      docker-pullable://busybox@sha256:bde48e1751173b709090c2539fdf12d6ba64e88ec7a4301591227ce925f3c678
+    Port:          <none>
+    Host Port:     <none>
+    Command:
+      sh
+      -c
+      # Checking if zookeeper service is up
+      echo Trying to contact test-zookeeper 2181
+      until nc -vzw 1 test-zookeeper 2181; do
+        echo "waiting for zookeeper..."
+        sleep 2
+      done
+      
+    State:          Terminated
+      Reason:       Completed
+      Exit Code:    0
+      Started:      Fri, 18 Dec 2020 23:57:41 +0530
+      Finished:     Fri, 18 Dec 2020 23:58:08 +0530
+    Ready:          True
+    Restart Count:  0
+    Environment:    <none>
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from test-nifi-token-jxsw5 (ro)
+  cert:
+    Container ID:  docker://e94199db55318fb32c27eb4f3568b5f139d7fae3dd71bfdf5aa214cec8f8ca3d
+    Image:         apache/nifi-toolkit:latest
+    Image ID:      docker-pullable://apache/nifi-toolkit@sha256:755df01e8f154a0772a9f7489fd94eb937efa47292ff22c72a269146752616b1
+    Port:          <none>
+    Host Port:     <none>
+    Command:
+      bash
+      -c
+      CA_ADDRESS="test-ca:9090"
+      until echo "" | timeout -t 2 openssl s_client -connect "${CA_ADDRESS}"; do
+        # Checking if ca server using nifi-toolkit is up
+        echo "Waiting for CA to be avaiable at ${CA_ADDRESS}"
+        sleep 2
+      done;
+      cd /data/config-data
+      rm -rf certs
+      mkdir certs
+      cd certs
+      # Generate certificate for server with webProxyHost or service name as alternate names to access nifi web ui
+      set -e
+      ${NIFI_TOOLKIT_HOME}/bin/tls-toolkit.sh client \
+        -c "test-ca" \
+        -t sixteenCharacters \
+        --subjectAlternativeNames test-nifi.test.svc \
+        -D "CN=$(hostname -f), OU=NIFI" \
+        -p 9090
+      # Generate client certificate for browser with webProxyHost or service name as alternate names to access nifi web ui
+      mkdir -p /data/config-data/certs/admin
+      cd /data/config-data/certs/admin
+      
+      ${NIFI_TOOLKIT_HOME}/bin/tls-toolkit.sh client \
+        -c "test-ca" \
+        -t sixteenCharacters \
+        --subjectAlternativeNames test-nifi.test.svc \
+        -p 9090 \
+        -D "CN=admin, OU=NIFI" \
+        -T PKCS12
+      
+      export PASS=$(jq -r .keyStorePassword config.json)
+      
+      openssl pkcs12 -in "keystore.pkcs12" -out "key.pem" -nocerts -nodes -password "env:PASS"
+      openssl pkcs12 -in "keystore.pkcs12" -out "crt.pem" -clcerts -nokeys -password "env:PASS"
+      
+    State:          Terminated
+      Reason:       Completed
+      Exit Code:    0
+      Started:      Fri, 18 Dec 2020 23:58:09 +0530
+      Finished:     Fri, 18 Dec 2020 23:58:15 +0530
+    Ready:          True
+    Restart Count:  0
+    Environment:    <none>
+    Mounts:
+      /data/config-data from config-data (rw)
+      /var/run/secrets/kubernetes.io/serviceaccount from test-nifi-token-jxsw5 (ro)
+Containers:
+  server:
+    Container ID:  docker://419dfec4e1017b6457def5add78bf11fd55e1db380cbda8117a1e06ba0c5d01b
+    Image:         apache/nifi:latest
+    Image ID:      docker-pullable://apache/nifi@sha256:bf7576ab7ad0bfe38c86be5baa47229d1644287984034dc9d5ff4801c5827115
+    Ports:         8443/TCP, 8081/TCP
+    Host Ports:    0/TCP, 0/TCP
+    Command:
+      bash
+      -ce
+      set -ex
+      # Creating a script to call nifi-toolkit
+      cat > call_nifi_toolkit.sh << EOF
+      #!/usr/bin/env bash
+      set -e
+      
+      input_command=\$*
+      toolKitCli="${NIFI_TOOLKIT_HOME}/bin/cli.sh"
+      webProtocol=https
+      webPort=8443
+      trustStore="${NIFI_HOME}/config-data/certs/admin/truststore.jks"
+      trustStorePassword=$(jq -r .trustStorePassword ${NIFI_HOME}/config-data/certs/admin/config.json)
+      trustStoreType=$(jq -r .trustStoreType ${NIFI_HOME}/config-data/certs/admin/config.json)
+      keyStore="${NIFI_HOME}/config-data/certs/admin/keystore.pkcs12"
+      keyStorePassword=$(jq -r .keyStorePassword ${NIFI_HOME}/config-data/certs/admin/config.json)
+      keyStoreType=$(jq -r .keyStoreType ${NIFI_HOME}/config-data/certs/admin/config.json)
+      secureOptions="-ts \$trustStore -tsp \$trustStorePassword -tst \$trustStoreType -ks \$keyStore -ksp \$keyStorePassword -kst \$keyStoreType"
+      base_url_host=$(echo `hostname | rev  | cut -d "-" -f 2- | rev`-0.`hostname -f | cut -d "." -f 2-`)
+      \$toolKitCli \$input_command -u \$webProtocol://\$base_url_host:\$webPort -ot json \$secureOptions
+      EOF
+      chmod 700 call_nifi_toolkit.sh
+      update_property () {
+        target_file=${NIFI_HOME}/conf/${3:-nifi.properties}
+        echo "updating ${1} in ${target_file}"
+        if egrep "^${1}=" ${target_file} &> /dev/null; then
+          sed -i -e "s|^$1=.*$|$1=$2|"  ${target_file}
+        else
+          echo ${1}=${2} >> ${target_file}
+        fi
+      }
+      
+      mkdir -p ${NIFI_HOME}/config-data/conf
+      NIFI_HOST=$(hostname -f)
+      # Create authorizers.xml
+      cat "${NIFI_HOME}/conf/authorizers.temp" > "${NIFI_HOME}/conf/authorizers.xml"
+      # Create login-identity-providers.xml
+      cat "${NIFI_HOME}/conf/login-identity-providers.temp" > "${NIFI_HOME}/conf/login-identity-providers.xml"
+      # Add manager DN Password for ldap access
+      sed -i "s@SECRET_MANAGER_PASSWORD@$ldap_manager_password@g" "${NIFI_HOME}/conf/authorizers.xml"
+      sed -i "s@SECRET_MANAGER_PASSWORD@$ldap_manager_password@g" "${NIFI_HOME}/conf/login-identity-providers.xml"
+      # Create and update nifi.properties
+      cat "${NIFI_HOME}/conf/nifi.temp" > "${NIFI_HOME}/conf/nifi.properties"
+      update_property nifi.remote.input.host ${NIFI_HOST}
+      update_property nifi.cluster.node.address ${NIFI_HOST}
+      update_property nifi.cluster.flow.election.max.candidates 1
+      # Update nifi.properties for security properties
+      update_property nifi.web.https.host ${NIFI_HOST}
+      update_property nifi.security.keystore   ${NIFI_HOME}/config-data/certs/keystore.jks
+      update_property nifi.security.keystoreType JKS
+      update_property nifi.security.keystorePasswd     $(jq -r .keyStorePassword ${NIFI_HOME}/config-data/certs/config.json)
+      update_property nifi.security.keyPasswd          $(jq -r .keyPassword ${NIFI_HOME}/config-data/certs/config.json)
+      update_property nifi.security.truststore   ${NIFI_HOME}/config-data/certs/truststore.jks
+      update_property nifi.security.truststoreType JKS
+      update_property nifi.security.truststorePasswd   $(jq -r .trustStorePassword ${NIFI_HOME}/config-data/certs/config.json)
+      update_property nifi.web.https.network.interface.default eth0
+      # Adding new node from scale-up operation to "/proxy" policy
+      # If current pod number is greater than what it was in initial cluster, then add grant it access to /proxy.
+      # This is needed for this NiFi node to proxy user requests.
+      current_node=$(hostname | rev | awk -F "-" '{print $1}' | rev)
+      if [ "$current_node" -ge "1" ]; then
+        cluster_info=$(./call_nifi_toolkit.sh nifi get-nodes)
+        node_status=$(echo $cluster_info | jq -r  ".cluster.nodes[] | select((.address==\"$(hostname -f)\")) | .status")
+        if [[ "$node_status" == "DISCONNECTED" ]]; then
+          # Need to cleanup the node, the deleted node is added back to cluster as disconnected node
+          # https://issues.apache.org/jira/browse/NIFI-7003
+          # The bug is fixed in NiFi version >= 1.12.0
+          node_id=$(echo $cluster_info | jq -r  ".cluster.nodes[] | select((.address==\"$(hostname -f)\")) | .nodeId")
+          ./call_nifi_toolkit.sh nifi delete-node --nifiNodeId $node_id
+        fi
+        ./call_nifi_toolkit.sh nifi create-user -un CN=$(hostname -f)
+        ./call_nifi_toolkit.sh nifi update-policy -por "/proxy" -poa write -unl CN=$(hostname -f)
+      fi
+      base_host=$(echo `hostname | rev  | cut -d "-" -f 2- | rev`-0)
+      if [[ `hostname` != "$base_host" ]]; then
+        # Download kubectl, this can be later backed into the docker image
+        curl -Lo ${NIFI_HOME}/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/`curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt`/bin/linux/amd64/kubectl
+        chmod +x ${NIFI_HOME}/bin/kubectl
+        # Download authorizations.xml from pod-0, it helps to get authorizations.xml required for adding up new nodes
+        ${NIFI_HOME}/bin/kubectl cp test/${base_host}:/opt/nifi/nifi-current/config-data/conf/authorizations.xml /opt/nifi/nifi-current/config-data/conf/authorizations.xml
+        ${NIFI_HOME}/bin/kubectl cp test/${base_host}:/opt/nifi/nifi-current/config-data/conf/users.xml /opt/nifi/nifi-current/config-data/conf/users.xml
+      fi
+      update_property nifi.web.proxy.host test-nifi.test.svc
+      exec bin/nifi.sh run
+      
+    State:          Running
+      Started:      Fri, 18 Dec 2020 23:58:16 +0530
+    Ready:          True
+    Restart Count:  0
+    Requests:
+      cpu:      900m
+      memory:   5Gi
+    Liveness:   tcp-socket :8443 delay=90s timeout=1s period=60s #success=1 #failure=3
+    Readiness:  exec [bash -c # Setting up the readiness probe
+base_url_host=$(echo `hostname | rev  | cut -d "-" -f 2- | rev`-0.`hostname -f | cut -d "." -f 2-`)
+curl -k \
+  --cert ${NIFI_HOME}/config-data/certs/admin/crt.pem --cert-type PEM \
+  --key ${NIFI_HOME}/config-data/certs/admin/key.pem --key-type PEM \
+  https://$base_url_host:8443/nifi-api/controller/cluster > /tmp/cluster.state
+# Get the cluster status
+STATUS=$(jq -r ".cluster.nodes[] | select((.address==\"$(hostname -f)\") or .address==\"localhost\") | .status" /tmp/cluster.state)
+
+if [[ $STATUS != "CONNECTED" ]]; then
+  echo "Node not found with CONNECTED state. Full cluster state:"
+  jq . /tmp/cluster.state
+  exit 1
+fi
+] delay=60s timeout=1s period=20s #success=1 #failure=3
+    Environment Variables from:
+      test-nifi   Secret  Optional: false
+    Environment:  <none>
+    Mounts:
+      /data/partition1 from data1 (rw)
+      /data/partition2 from data2 (rw)
+      /data/partition3 from data3 (rw)
+      /opt/nifi/nifi-current/conf/authorizers.temp from authorizers-temp (rw,path="authorizers.temp")
+      /opt/nifi/nifi-current/conf/bootstrap.conf from bootstrap-conf (rw,path="bootstrap.conf")
+      /opt/nifi/nifi-current/conf/logback.xml from logback-xml (rw,path="logback.xml")
+      /opt/nifi/nifi-current/conf/login-identity-providers.temp from login-identity-providers-xml (rw,path="login-identity-providers.temp")
+      /opt/nifi/nifi-current/conf/nifi.temp from nifi-properties (rw,path="nifi.temp")
+      /opt/nifi/nifi-current/conf/state-management.xml from state-management-xml (rw,path="state-management.xml")
+      /opt/nifi/nifi-current/config-data from config-data (rw)
+      /opt/nifi/nifi-current/logs from logs (rw)
+      /var/run/secrets/kubernetes.io/serviceaccount from test-nifi-token-jxsw5 (ro)
+  app-log:
+    Container ID:  docker://3a10acabdd32a845f1741dd183005a8737c7901f59f108e546231ddcdde8872a
+    Image:         alpine:latest
+    Image ID:      docker-pullable://alpine@sha256:3c7497bf0c7af93428242d6176e8f7905f2201d8fc5861f45be7a346b5f23436
+    Port:          <none>
+    Host Port:     <none>
+    Args:
+      tail
+      -n+1
+      -F
+      /var/log/nifi-app.log
+    State:          Running
+      Started:      Fri, 18 Dec 2020 23:58:17 +0530
+    Ready:          True
+    Restart Count:  0
+    Limits:
+      cpu:     50m
+      memory:  50Mi
+    Requests:
+      cpu:        10m
+      memory:     10Mi
+    Environment:  <none>
+    Mounts:
+      /var/log from logs (rw)
+      /var/run/secrets/kubernetes.io/serviceaccount from test-nifi-token-jxsw5 (ro)
+  bootstrap-log:
+    Container ID:  docker://8c68f3ee0af5d8c47ce2d11dce44d203a3b58a9012b8a530ae34a865b3d40b6a
+    Image:         alpine:latest
+    Image ID:      docker-pullable://alpine@sha256:3c7497bf0c7af93428242d6176e8f7905f2201d8fc5861f45be7a346b5f23436
+    Port:          <none>
+    Host Port:     <none>
+    Args:
+      tail
+      -n+1
+      -F
+      /var/log/nifi-bootstrap.log
+    State:          Running
+      Started:      Fri, 18 Dec 2020 23:58:18 +0530
+    Ready:          True
+    Restart Count:  0
+    Limits:
+      cpu:     50m
+      memory:  50Mi
+    Requests:
+      cpu:        10m
+      memory:     10Mi
+    Environment:  <none>
+    Mounts:
+      /var/log from logs (rw)
+      /var/run/secrets/kubernetes.io/serviceaccount from test-nifi-token-jxsw5 (ro)
+  user-log:
+    Container ID:  docker://045c2b0432a1304dad2153d9a329e616bcf74f14095a20e7403a39cae819313f
+    Image:         alpine:latest
+    Image ID:      docker-pullable://alpine@sha256:3c7497bf0c7af93428242d6176e8f7905f2201d8fc5861f45be7a346b5f23436
+    Port:          <none>
+    Host Port:     <none>
+    Args:
+      tail
+      -n+1
+      -F
+      /var/log/nifi-user.log
+    State:          Running
+      Started:      Fri, 18 Dec 2020 23:58:18 +0530
+    Ready:          True
+    Restart Count:  0
+    Limits:
+      cpu:     50m
+      memory:  50Mi
+    Requests:
+      cpu:        10m
+      memory:     10Mi
+    Environment:  <none>
+    Mounts:
+      /var/log from logs (rw)
+      /var/run/secrets/kubernetes.io/serviceaccount from test-nifi-token-jxsw5 (ro)
+Conditions:
+  Type              Status
+  Initialized       True 
+  Ready             True 
+  ContainersReady   True 
+  PodScheduled      True 
+Volumes:
+  logs:
+    Type:       PersistentVolumeClaim (a reference to a PersistentVolumeClaim in the same namespace)
+    ClaimName:  logs-test-nifi-0
+    ReadOnly:   false
+  config-data:
+    Type:       PersistentVolumeClaim (a reference to a PersistentVolumeClaim in the same namespace)
+    ClaimName:  config-data-test-nifi-0
+    ReadOnly:   false
+  data1:
+    Type:       PersistentVolumeClaim (a reference to a PersistentVolumeClaim in the same namespace)
+    ClaimName:  data1-test-nifi-0
+    ReadOnly:   false
+  data2:
+    Type:       PersistentVolumeClaim (a reference to a PersistentVolumeClaim in the same namespace)
+    ClaimName:  data2-test-nifi-0
+    ReadOnly:   false
+  data3:
+    Type:       PersistentVolumeClaim (a reference to a PersistentVolumeClaim in the same namespace)
+    ClaimName:  data3-test-nifi-0
+    ReadOnly:   false
+  bootstrap-conf:
+    Type:      ConfigMap (a volume populated by a ConfigMap)
+    Name:      test-nifi
+    Optional:  false
+  nifi-properties:
+    Type:      ConfigMap (a volume populated by a ConfigMap)
+    Name:      test-nifi
+    Optional:  false
+  authorizers-temp:
+    Type:      ConfigMap (a volume populated by a ConfigMap)
+    Name:      test-nifi
+    Optional:  false
+  logback-xml:
+    Type:      ConfigMap (a volume populated by a ConfigMap)
+    Name:      test-nifi
+    Optional:  false
+  state-management-xml:
+    Type:      ConfigMap (a volume populated by a ConfigMap)
+    Name:      test-nifi
+    Optional:  false
+  login-identity-providers-xml:
+    Type:      ConfigMap (a volume populated by a ConfigMap)
+    Name:      test-nifi
+    Optional:  false
+  test-nifi-token-jxsw5:
+    Type:        Secret (a volume populated by a Secret)
+    SecretName:  test-nifi-token-jxsw5
+    Optional:    false
+QoS Class:       Burstable
+Node-Selectors:  <none>
+Tolerations:     node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                 node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type     Reason     Age   From               Message
+  ----     ------     ----  ----               -------
+  Normal   Scheduled  36m   default-scheduler  Successfully assigned test/test-nifi-0 to worker03.test-local.halo.pan-net.cloud
+  Normal   Pulled     36m   kubelet            Container image "busybox" already present on machine
+  Normal   Created    36m   kubelet            Created container zookeeper
+  Normal   Started    36m   kubelet            Started container zookeeper
+  Normal   Pulled     35m   kubelet            Container image "apache/nifi-toolkit:latest" already present on machine
+  Normal   Created    35m   kubelet            Created container cert
+  Normal   Started    35m   kubelet            Started container cert
+  Normal   Pulled     35m   kubelet            Container image "apache/nifi:latest" already present on machine
+  Normal   Created    35m   kubelet            Created container server
+  Normal   Started    35m   kubelet            Started container server
+  Normal   Pulled     35m   kubelet            Container image "alpine:latest" already present on machine
+  Normal   Created    35m   kubelet            Created container app-log
+  Normal   Created    35m   kubelet            Created container bootstrap-log
+  Normal   Pulled     35m   kubelet            Container image "alpine:latest" already present on machine
+  Normal   Started    35m   kubelet            Started container app-log
+  Normal   Started    35m   kubelet            Started container bootstrap-log
+  Normal   Pulled     35m   kubelet            Container image "alpine:latest" already present on machine
+  Normal   Created    35m   kubelet            Created container user-log
+  Normal   Started    35m   kubelet            Started container user-log
+  Warning  Unhealthy  34m   kubelet            Readiness probe failed: Node not found with CONNECTED state. Full cluster state:
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0100   125  100   125    0     0    280      0 --:--:-- --:--:-- --:--:--   280
+parse error: Invalid numeric literal at line 1, column 7
+parse error: Invalid numeric literal at line 1, column 7
+  Warning  Unhealthy  33m  kubelet  Readiness probe failed: Node not found with CONNECTED state. Full cluster state:
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0100   125  100   125    0     0   2840      0 --:--:-- --:--:-- --:--:--  2840
+parse error: Invalid numeric literal at line 1, column 7
+parse error: Invalid numeric literal at line 1, column 7
+  Warning  Unhealthy  33m  kubelet  Readiness probe failed: Node not found with CONNECTED state. Full cluster state:
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0100   125  100   125    0     0   3472      0 --:--:-- --:--:-- --:--:--  3472
+parse error: Invalid numeric literal at line 1, column 7
+parse error: Invalid numeric literal at line 1, column 7
+  Warning  Unhealthy  33m  kubelet  Readiness probe failed: Node not found with CONNECTED state. Full cluster state:
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0100   125  100   125    0     0   3906      0 --:--:-- --:--:-- --:--:--  3906
+parse error: Invalid numeric literal at line 1, column 7
+parse error: Invalid numeric literal at line 1, column 7
+  Warning  Unhealthy  32m  kubelet  Readiness probe failed: Node not found with CONNECTED state. Full cluster state:
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0100   125  100   125    0     0   3676      0 --:--:-- --:--:-- --:--:--  3676
+parse error: Invalid numeric literal at line 1, column 7
+parse error: Invalid numeric literal at line 1, column 7
